@@ -1,0 +1,26 @@
+name: AI DevSecOps PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+  models: read
+
+jobs:
+  ai-pr-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AI PR Review
+        uses: TU_ORG/ai-devsecops-pr-review-gate@v1
+        with:
+          ai-provider: github-models
+          ai-model: openai/gpt-4o
+          stack: auto
+          comment-pr: "true"
+          fail-on-severity: never

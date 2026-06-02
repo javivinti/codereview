@@ -1,0 +1,162 @@
+name: "AI DevSecOps PR Review Gate"
+description: "AI-powered Pull Request review framework with prompt packs, PR context generation, multi-provider AI, JSON output and optional severity gate."
+author: "Internal DevSecOps Team"
+
+inputs:
+  ai-provider:
+    description: "AI provider: github-models, openai-compatible, anthropic, gemini, mock. If empty, prompt front matter provider is used."
+    required: false
+    default: ""
+  ai-model:
+    description: "Model name. If empty, prompt front matter model is used."
+    required: false
+    default: ""
+  ai-api-key:
+    description: "API key for the selected provider. Not required for github-models if GITHUB_TOKEN has models:read."
+    required: false
+    default: ""
+  ai-base-url:
+    description: "Base URL for OpenAI-compatible providers."
+    required: false
+    default: ""
+  prompts-repository:
+    description: "Optional external prompts repository, example: org/coe-ia-prompts"
+    required: false
+    default: ""
+  prompts-ref:
+    description: "Branch, tag or commit for prompts repository"
+    required: false
+    default: "main"
+  prompts-token:
+    description: "Token to clone private prompts repository. If empty, GITHUB_TOKEN is used."
+    required: false
+    default: ""
+  prompt-path:
+    description: "Prompt path. Can be local or relative to external prompts repository."
+    required: false
+    default: ""
+  stack:
+    description: "Stack selector: auto, backend-nestjs, backend-go, terraform, generic-security"
+    required: false
+    default: "auto"
+  comment-pr:
+    description: "Whether to publish/update a PR comment"
+    required: false
+    default: "true"
+  upload-results:
+    description: "Whether to upload result files as artifact"
+    required: false
+    default: "true"
+  fail-on-severity:
+    description: "Fail the job if severity is at least: critical, high, medium, low, never"
+    required: false
+    default: "never"
+  exclude-directories:
+    description: "Comma-separated directories to exclude"
+    required: false
+    default: "node_modules,dist,build,vendor,.git,coverage"
+  max-files:
+    description: "Maximum changed files to include"
+    required: false
+    default: "80"
+  max-diff-chars:
+    description: "Maximum diff characters included in pr_context.md"
+    required: false
+    default: "180000"
+  include-pr-comments:
+    description: "Whether to include existing PR comments in pr_context.md"
+    required: false
+    default: "true"
+  custom-instructions:
+    description: "Extra security/architecture instructions appended at runtime"
+    required: false
+    default: ""
+  enable-basic-filter:
+    description: "Enable deterministic false-positive/noise filtering"
+    required: false
+    default: "true"
+
+outputs:
+  findings-count:
+    description: "Number of findings after filtering"
+    value: ${{ steps.review.outputs.findings_count }}
+  results-file:
+    description: "Path to JSON results"
+    value: ${{ steps.review.outputs.results_file }}
+  context-file:
+    description: "Path to generated PR context file"
+    value: ${{ steps.review.outputs.context_file }}
+  comment-file:
+    description: "Path to generated markdown comment"
+    value: ${{ steps.review.outputs.comment_file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install runtime dependencies
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+
+    - name: Resolve external prompts repository
+      shell: bash
+      env:
+        PROMPTS_REPOSITORY: ${{ inputs.prompts-repository }}
+        PROMPTS_REF: ${{ inputs.prompts-ref }}
+        PROMPTS_TOKEN: ${{ inputs.prompts-token }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        if [ -n "$PROMPTS_REPOSITORY" ]; then
+          rm -rf .ai-prompts
+          TOKEN="${PROMPTS_TOKEN:-$GITHUB_TOKEN}"
+          git clone --depth 1 --branch "$PROMPTS_REF" "https://x-access-token:${TOKEN}@github.com/${PROMPTS_REPOSITORY}.git" .ai-prompts
+          echo "AI_PROMPTS_ROOT=$PWD/.ai-prompts" >> "$GITHUB_ENV"
+        else
+          echo "AI_PROMPTS_ROOT=$PWD" >> "$GITHUB_ENV"
+        fi
+
+    - name: Run AI PR review
+      id: review
+      shell: bash
+      env:
+        PYTHONPATH: ${{ github.action_path }}
+        GITHUB_TOKEN: ${{ github.token }}
+        INPUT_AI_PROVIDER: ${{ inputs.ai-provider }}
+        INPUT_AI_MODEL: ${{ inputs.ai-model }}
+        INPUT_AI_API_KEY: ${{ inputs.ai-api-key }}
+        INPUT_AI_BASE_URL: ${{ inputs.ai-base-url }}
+        INPUT_PROMPT_PATH: ${{ inputs.prompt-path }}
+        INPUT_STACK: ${{ inputs.stack }}
+        INPUT_COMMENT_PR: ${{ inputs.comment-pr }}
+        INPUT_FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+        INPUT_EXCLUDE_DIRECTORIES: ${{ inputs.exclude-directories }}
+        INPUT_MAX_FILES: ${{ inputs.max-files }}
+        INPUT_MAX_DIFF_CHARS: ${{ inputs.max-diff-chars }}
+        INPUT_INCLUDE_PR_COMMENTS: ${{ inputs.include-pr-comments }}
+        INPUT_CUSTOM_INSTRUCTIONS: ${{ inputs.custom-instructions }}
+        INPUT_ENABLE_BASIC_FILTER: ${{ inputs.enable-basic-filter }}
+      run: |
+        python -m ai_pr_review_engine.run
+
+    - name: Upload AI PR review artifacts
+      if: always() && inputs.upload-results == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ai-devsecops-pr-review
+        path: |
+          pr_context.md
+          ai-review-result.json
+          ai-review-comment.md
+        if-no-files-found: ignore
+        retention-days: 14
+
+branding:
+  icon: "shield"
+  color: "red"

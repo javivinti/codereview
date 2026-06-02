@@ -1,0 +1,29 @@
+name: AI DevSecOps PR Review With External Prompts
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+  models: read
+
+jobs:
+  ai-pr-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AI PR Review
+        uses: TU_ORG/ai-devsecops-pr-review-gate@v1
+        with:
+          ai-provider: github-models
+          ai-model: openai/gpt-4o
+          prompts-repository: TU_ORG/coe-ia-prompts
+          prompts-ref: master
+          prompts-token: ${{ secrets.PROMPTS_REPO_TOKEN }}
+          prompt-path: pullrequest/backend/nestjs/prompt.md
+          comment-pr: "true"
+          fail-on-severity: critical
